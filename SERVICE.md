@@ -1,59 +1,38 @@
-# Контракт сервиса
+# Как вызывать сервис
 
-Сервис не рисует страницу. Он принимает набор ответов и возвращает либо следующий вопрос, либо готовый список документов.
+Вся логика в `wizard.py`. HTTP-обёртка — `app.py`. Состояние диалога — словарь `answers`, его хранит вызывающий код.
 
-Состояние диалога — JSON-объект `answers`. Его хранит страница (сессия, скрытое поле, JS). Сервис его не сохраняет.
+## Python
 
-## Файлы
+```python
+from wizard import start, answer, rewind, next_step
 
-| Файл | Назначение |
-| --- | --- |
-| `scheme.json` | Справочники, порядок вопросов, правила документов |
-| `src/DocsPickerService.php` | Логика на PHP для 1С-Битрикс |
-| `src/ajax.php` | HTTP API: POST JSON |
-| `src/engine.js` | Та же логика в браузере, если страницу делают на JS |
-
-## PHP
-
-```php
-require $_SERVER["DOCUMENT_ROOT"] . "/local/docs-picker/DocsPickerService.php";
-
-$picker = DocsPickerService::fromFile($_SERVER["DOCUMENT_ROOT"] . "/local/docs-picker/scheme.json");
-
-$step = $picker->start();
-$step = $picker->answer($step["answers"], $step["question"]["id"], "lt1m");
-$step = $picker->rewind($step["answers"], "channel");
-$step = $picker->nextStep($answers);
+step = start()
+step = answer(step["answers"], step["question"]["id"], "lt1m")
+step = rewind(step["answers"], "amount")
+step = next_step({"amount": "lt1m", "channel": "office"})
 ```
+
+Пока опрос не закончен: `done` = false и объект `question`.
+Когда все ответы есть: `done` = true и объект `package` со списком документов.
+
+Для `multi` значение — список id, например `["usn", "osno"]`. Пустой список на шаге обеспечения означает «залога нет».
 
 ## HTTP
 
-Скопируйте `scheme.json`, `DocsPickerService.php` и `ajax.php` в `/local/docs-picker/`.
-
 ```
-POST /local/docs-picker/ajax.php
-Content-Type: application/json
-```
-
-```json
-{ "action": "start" }
+python -m venv .venv
+.venv\Scripts\activate
+pip install -r requirements.txt
+python app.py
 ```
 
-```json
-{ "action": "answer", "answers": {}, "question_id": "amount", "value": "lt1m" }
-```
+- `GET /` — первый вопрос
+- `POST /step` — `{"answers": {...}}`
+- `POST /answer` — `{"answers": {...}, "question_id": "amount", "value": "lt1m"}`
+- `POST /rewind` — `{"answers": {...}, "question_id": "form"}`
 
-Для `multi` в `value` передайте массив id, например `["usn","osno"]`. Пустой массив на шаге обеспечения означает «залога нет».
-
-```json
-{ "action": "rewind", "answers": { "...": "..." }, "question_id": "form" }
-```
-
-```json
-{ "action": "next", "answers": { "amount": "lt1m", "channel": "office" } }
-```
-
-## Ответ, пока опрос не закончен
+## Ответ с вопросом
 
 ```json
 {
@@ -70,14 +49,13 @@ Content-Type: application/json
     "hint": "...",
     "options": [{ "id": "lt1m", "label": "до 1 000 000" }],
     "links": []
-  },
-  "package": null
+  }
 }
 ```
 
-`type`: `single` — одно значение-строка, `multi` — массив id.
+`type`: `single` — строка, `multi` — массив id.
 
-## Ответ, когда список готов
+## Ответ со списком документов
 
 ```json
 {
@@ -98,23 +76,10 @@ Content-Type: application/json
 }
 ```
 
-## Правила ветвления
+## Ветвление
 
-- `family` и `spouse_tax` только для ИП / главы КФХ.
-- `spouse_tax` только если супруг(а) тоже ИП.
-- `owner` только если выбран хотя бы один вид залога.
-- Если сумма «от 1 000 000» и обеспечение пустое, сервис возвращает текущий вопрос `collateral` и текст ошибки в `error`.
-- Для ЮЛ вопросы про семью не задаются.
-
-Тексты вопросов живут в PHP/JS. Менять перечень документов и налоговые режимы — в `scheme.json`.
-
-## JS (если страница без PHP)
-
-```javascript
-fetch("/local/docs-picker/scheme.json")
-  .then(function (r) { return r.json(); })
-  .then(function (scheme) {
-    var picker = DocsPicker.create(scheme);
-    var step = picker.start();
-  });
-```
+- `family` и `spouse_tax` только для ИП / главы КФХ
+- `spouse_tax` только если супруг(а) тоже ИП
+- `owner` только если выбран хотя бы один вид залога
+- сумма от 1 млн и пустой залог: снова вопрос `collateral` и текст в `error`
+- для ЮЛ вопросы про семью не задаются
